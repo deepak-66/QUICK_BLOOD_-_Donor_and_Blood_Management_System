@@ -1,6 +1,6 @@
 -- =====================================================
 -- QUICK BLOOD
--- BLOOD & DONORS MANAGEMENT SYSTEM  (VERSION 2 - CORRECTED SCHEMA)
+-- BLOOD & DONORS MANAGEMENT SYSTEM 
 -- =====================================================
 
 --  Contents:
