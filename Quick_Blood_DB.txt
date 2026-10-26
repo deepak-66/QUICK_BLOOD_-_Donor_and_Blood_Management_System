@@ -1,0 +1,1507 @@
+-- =====================================================
+-- QUICK BLOOD
+-- BLOOD & DONORS MANAGEMENT SYSTEM 
+-- =====================================================
+
+--  Contents:
+--    PART 1  : Database & Table Creation (schema)
+--    PART 2  : Sample Data (INSERT statements)
+--    PART 3  : Indexes
+--    PART 4  : Views
+--    PART 5  : Stored Procedures
+--    PART 6  : Triggers (+ supporting donation_log table)
+--    PART 7  : Query Bank - Level 1 (Q1-Q3)    + Outputs
+--    PART 8  : Query Bank - Level 2 (Q4-Q6)    + Outputs
+--    PART 9  : Query Bank - Level 3 (Q7-Q8)    + Outputs
+--    PART 10 : Query Bank - New Queries (Q9-Q21) + Outputs
+--    PART 11 : Demo calls for Views / Procedures / Triggers
+--
+--  RDBMS   : MySQL 8.0.16+
+
+-- =====================================================
+--   PART 1 : Database & Table Creation (schema)
+-- =====================================================
+
+DROP DATABASE IF EXISTS quick_blood_database;
+CREATE DATABASE quick_blood_database;
+USE quick_blood_database;
+
+-- =====================================================
+-- TABLE 1 : BLOOD GROUPS (lookup table, new)
+-- =====================================================
+-- USE : Lists the 8 valid blood groups once. Other tables point to it, so no typos like a+ or AB.
+
+CREATE TABLE blood_groups (
+    blood_group_id TINYINT AUTO_INCREMENT PRIMARY KEY,
+    group_name     VARCHAR(3) NOT NULL UNIQUE
+);
+
+-- =====================================================
+-- TABLE 2 : HOSPITALS
+-- =====================================================
+-- USE : Stores hospitals that raise blood requests.
+
+CREATE TABLE hospitals (
+    hospital_id   INT AUTO_INCREMENT PRIMARY KEY,
+    hospital_name VARCHAR(100) NOT NULL,
+    city          VARCHAR(50)  NOT NULL,
+    contact_no    VARCHAR(15),
+    UNIQUE (hospital_name, city)
+);
+
+-- =====================================================
+-- TABLE 3 : BLOOD BANKS
+-- =====================================================
+-- USE : Stores blood banks that receive donations, hold stock and fulfil requests.
+
+CREATE TABLE blood_banks (
+    bank_id    INT AUTO_INCREMENT PRIMARY KEY,
+    bank_name  VARCHAR(100) NOT NULL,
+    location   VARCHAR(100) NOT NULL,
+    contact_no VARCHAR(15),
+    UNIQUE (bank_name, location)
+);
+
+-- =====================================================
+-- TABLE 4 : DONORS
+-- =====================================================
+-- USE : Stores people who donate blood, with their blood group and city.
+
+CREATE TABLE donors (
+    donor_id       INT AUTO_INCREMENT PRIMARY KEY,
+    donor_name     VARCHAR(100) NOT NULL,
+    gender         ENUM('Male','Female','Other') NOT NULL,
+    blood_group_id TINYINT NOT NULL,
+    age            INT NOT NULL,
+    phone          VARCHAR(15) NOT NULL UNIQUE,
+    email          VARCHAR(100) UNIQUE,
+    city           VARCHAR(50) NOT NULL,
+
+    CONSTRAINT chk_donor_age CHECK (age BETWEEN 18 AND 65),
+
+    FOREIGN KEY (blood_group_id)
+    REFERENCES blood_groups(blood_group_id)
+);
+
+-- =====================================================
+-- TABLE 5 : RECIPIENTS
+-- =====================================================
+-- USE : Stores patients who need blood and the hospital they are admitted to.
+
+CREATE TABLE recipients (
+    recipient_id   INT AUTO_INCREMENT PRIMARY KEY,
+    recipient_name VARCHAR(100) NOT NULL,
+    blood_group_id TINYINT NOT NULL,
+    age            INT NOT NULL,
+    hospital_id    INT,
+    phone          VARCHAR(15) NOT NULL,
+    city           VARCHAR(50),
+
+    CONSTRAINT chk_recipient_age CHECK (age BETWEEN 0 AND 120),
+
+    FOREIGN KEY (blood_group_id)
+    REFERENCES blood_groups(blood_group_id),
+
+    FOREIGN KEY (hospital_id)
+    REFERENCES hospitals(hospital_id)
+    ON DELETE SET NULL
+);
+
+-- =====================================================
+-- TABLE 6 : DONATIONS
+-- =====================================================
+-- USE : Records each donation: which donor gave to which bank, when and how many units.
+
+CREATE TABLE donations (
+    donation_id   INT AUTO_INCREMENT PRIMARY KEY,
+    donor_id      INT NOT NULL,
+    bank_id       INT NOT NULL,
+    donation_date DATE NOT NULL,
+    units_donated INT NOT NULL DEFAULT 1,
+
+    CONSTRAINT chk_units_donated CHECK (units_donated > 0),
+
+    FOREIGN KEY (donor_id)
+    REFERENCES donors(donor_id),
+
+    FOREIGN KEY (bank_id)
+    REFERENCES blood_banks(bank_id)
+);
+
+-- =====================================================
+-- TABLE 7 : BLOOD INVENTORY
+-- =====================================================
+-- USE : Tracks units of each blood group currently held by each blood bank.
+
+CREATE TABLE blood_inventory (
+    inventory_id    INT AUTO_INCREMENT PRIMARY KEY,
+    bank_id         INT NOT NULL,
+    blood_group_id  TINYINT NOT NULL,
+    units_available INT NOT NULL DEFAULT 0,
+
+    CONSTRAINT chk_units_available CHECK (units_available >= 0),
+    UNIQUE (bank_id, blood_group_id),
+
+    FOREIGN KEY (bank_id)
+    REFERENCES blood_banks(bank_id)
+    ON DELETE CASCADE,
+
+    FOREIGN KEY (blood_group_id)
+    REFERENCES blood_groups(blood_group_id)
+);
+
+-- =====================================================
+-- TABLE 8 : REQUESTS
+-- =====================================================
+-- USE : Records blood requests from hospitals for recipients, and which bank fulfils them.
+
+-- bank_id is NULL while a request is Pending.
+
+CREATE TABLE requests (
+    request_id     INT AUTO_INCREMENT PRIMARY KEY,
+    recipient_id   INT NOT NULL,
+    hospital_id    INT NOT NULL,
+    bank_id        INT NULL,
+    blood_group_id TINYINT NOT NULL,
+    units_required INT NOT NULL,
+    request_date   DATE NOT NULL DEFAULT (CURRENT_DATE),
+    status         ENUM('Pending','Approved','Completed') NOT NULL DEFAULT 'Pending',
+
+    CONSTRAINT chk_units_required CHECK (units_required > 0),
+
+    FOREIGN KEY (recipient_id)
+    REFERENCES recipients(recipient_id),
+
+    FOREIGN KEY (hospital_id)
+    REFERENCES hospitals(hospital_id),
+
+    FOREIGN KEY (bank_id)
+    REFERENCES blood_banks(bank_id),
+
+    FOREIGN KEY (blood_group_id)
+    REFERENCES blood_groups(blood_group_id)
+);
+
+-- =====================================================
+--  PART 2  : Sample Data (INSERT statements)
+-- =====================================================
+
+-- =====================================================
+-- INSERT DATA : BLOOD GROUPS (8)
+-- =====================================================
+INSERT INTO blood_groups
+(group_name)
+VALUES
+('A+'),
+('A-'),
+('B+'),
+('B-'),
+('AB+'),
+('AB-'),
+('O+'),
+('O-');
+
+-- =====================================================
+-- INSERT DATA : HOSPITALS (10)
+-- =====================================================
+INSERT INTO hospitals
+(hospital_name,city,contact_no)
+VALUES
+('KIMS Hospital','Visakhapatnam','500001'),
+('Andhra Hospital','Vijayawada','500002'),
+('Ramesh Hospital','Guntur','500003'),
+('SVIMS Hospital','Tirupati','500004'),
+('Apollo Hospital','Kakinada','500005'),
+('Government General Hospital','Rajamahendravaram','500006'),
+('Medico Hospital','Nellore','500007'),
+('Life Care Hospital','Anantapur','500008'),
+('Sunrise Hospital','Kurnool','500009'),
+('Hope Hospital','Srikakulam','500010');
+
+-- =====================================================
+-- INSERT DATA : BLOOD BANKS (10)
+-- =====================================================
+INSERT INTO blood_banks
+(bank_name,location,contact_no)
+VALUES
+('Red Cross Blood Bank','Visakhapatnam','220001'),
+('Life Care Blood Bank','Vijayawada','220002'),
+('Jeevan Blood Center','Guntur','220003'),
+('Apollo Blood Bank','Tirupati','220004'),
+('Arogya Blood Bank','Kakinada','220005'),
+('LifeLine Blood Bank','Rajamahendravaram','220006'),
+('Save Life Blood Bank','Nellore','220007'),
+('Blood Care Center','Anantapur','220008'),
+('Universal Blood Bank','Kurnool','220009'),
+('Hope Blood Bank','Srikakulam','220010');
+
+-- blood_group_id: 1=A+ 2=A- 3=B+ 4=B- 5=AB+ 6=AB- 7=O+ 8=O-
+
+-- =====================================================
+-- INSERT DATA : DONORS (10)
+-- =====================================================
+INSERT INTO donors
+(donor_name,gender,blood_group_id,age,phone,email,city)
+VALUES
+('Ravi Kumar','Male',1,24,'9000000001','ravi@gmail.com','Visakhapatnam'),
+('Siva Prasad','Male',7,26,'9000000002','siva@gmail.com','Vijayawada'),
+('Lakshmi Devi','Female',3,22,'9000000003','lakshmi@gmail.com','Guntur'),
+('Pavan Kumar','Male',5,29,'9000000004','pavan@gmail.com','Tirupati'),
+('Harika Reddy','Female',8,25,'9000000005','harika@gmail.com','Kakinada'),
+('Sai Teja','Male',1,28,'9000000006','saiteja@gmail.com','Rajamahendravaram'),
+('Kiran Kumar','Male',4,30,'9000000007','kiran@gmail.com','Nellore'),
+('Anusha','Female',6,21,'9000000008','anusha@gmail.com','Anantapur'),
+('Vamsi Krishna','Male',7,27,'9000000009','vamsi@gmail.com','Kurnool'),
+('Deepika','Female',2,24,'9000000010','deepika@gmail.com','Srikakulam');
+
+-- =====================================================
+-- INSERT DATA : RECIPIENTS (10)
+-- =====================================================
+INSERT INTO recipients
+(recipient_name,blood_group_id,age,hospital_id,phone,city)
+VALUES
+('Rohan Kumar',1,35,1,'9100000001','Visakhapatnam'),
+('Priya Devi',3,29,2,'9100000002','Vijayawada'),
+('Manoj Kumar',7,42,3,'9100000003','Guntur'),
+('Latha Rani',5,26,4,'9100000004','Tirupati'),
+('Venkatesh',8,51,5,'9100000005','Kakinada'),
+('Raju',2,32,6,'9100000006','Rajamahendravaram'),
+('Bhavani',4,28,7,'9100000007','Nellore'),
+('Srinivas',6,45,8,'9100000008','Anantapur'),
+('Prasad',7,30,9,'9100000009','Kurnool'),
+('Ramya',1,23,10,'9100000010','Srikakulam');
+
+-- =====================================================
+-- INSERT DATA : DONATIONS (10)
+-- =====================================================
+INSERT INTO donations
+(donor_id,bank_id,donation_date,units_donated)
+VALUES
+(1,1,'2025-01-10',2),
+(2,2,'2025-02-10',1),
+(3,3,'2025-03-05',2),
+(4,4,'2025-01-22',1),
+(5,5,'2025-02-14',3),
+(6,6,'2025-03-18',2),
+(7,7,'2025-01-15',1),
+(8,8,'2025-04-01',2),
+(9,9,'2025-02-28',3),
+(10,10,'2025-03-20',1);
+
+-- =====================================================
+-- INSERT DATA : BLOOD INVENTORY (10)
+-- =====================================================
+INSERT INTO blood_inventory
+(bank_id,blood_group_id,units_available)
+VALUES
+(1,1,20),
+(2,7,22),
+(3,3,18),
+(4,5,15),
+(5,8,10),
+(6,1,25),
+(7,4,14),
+(8,6,8),
+(9,7,28),
+(10,2,16);
+
+-- =====================================================
+-- INSERT DATA : REQUESTS (10)
+-- =====================================================
+-- Approved / Completed requests are assigned the bank that stocks that blood group.
+-- Pending requests have bank_id = NULL.
+
+INSERT INTO requests
+(recipient_id,hospital_id,bank_id,blood_group_id,units_required,request_date,status)
+VALUES
+(1,1,1,1,2,'2025-05-01','Completed'),
+(2,2,3,3,1,'2025-05-02','Approved'),
+(3,3,NULL,7,3,'2025-05-03','Pending'),
+(4,4,4,5,2,'2025-05-04','Completed'),
+(5,5,5,8,1,'2025-05-05','Approved'),
+(6,6,NULL,2,2,'2025-05-06','Pending'),
+(7,7,7,4,1,'2025-05-07','Completed'),
+(8,8,8,6,2,'2025-05-08','Approved'),
+(9,9,NULL,7,3,'2025-05-09','Pending'),
+(10,10,1,1,2,'2025-05-10','Completed');
+
+-- =====================================================
+-- PART 3 : INDEXES
+-- (primary keys, UNIQUE and FOREIGN KEY columns are already indexed
+--  by MySQL, so only the extra search columns are listed here)
+-- =====================================================
+
+
+CREATE INDEX idx_donor_group_city ON donors(blood_group_id, city);
+
+CREATE INDEX idx_donor_city ON donors(city);
+
+CREATE INDEX idx_recipient_city ON recipients(city);
+
+CREATE INDEX idx_donation_donor_date ON donations(donor_id, donation_date);
+
+CREATE INDEX idx_request_status ON requests(status);
+
+CREATE INDEX idx_request_date ON requests(request_date);
+
+-- =====================================================
+-- PART 4 : VIEWS
+-- =====================================================
+
+
+-- 1.  view_donor_details
+
+CREATE OR REPLACE VIEW view_donor_details AS
+SELECT
+    d.donor_id,
+    d.donor_name,
+    bg.group_name AS blood_group,
+    d.city,
+    MAX(dn.donation_date) AS last_donation_date
+FROM donors d
+JOIN blood_groups bg ON d.blood_group_id = bg.blood_group_id
+LEFT JOIN donations dn ON d.donor_id = dn.donor_id
+GROUP BY d.donor_id, d.donor_name, bg.group_name, d.city;
+
+-- 2. view_blood_stock
+
+CREATE OR REPLACE VIEW view_blood_stock AS
+SELECT
+    bb.bank_name,
+    bb.location,
+    bg.group_name AS blood_group,
+    bi.units_available
+FROM blood_inventory bi
+JOIN blood_banks bb ON bi.bank_id = bb.bank_id
+JOIN blood_groups bg ON bi.blood_group_id = bg.blood_group_id;
+
+-- 3. view_donation_history
+
+CREATE OR REPLACE VIEW view_donation_history AS
+SELECT
+    d.donor_name,
+    bb.bank_name,
+    dn.donation_date,
+    dn.units_donated
+FROM donations dn
+JOIN donors d ON dn.donor_id = d.donor_id
+JOIN blood_banks bb ON dn.bank_id = bb.bank_id;
+
+-- 4. view_pending_requests
+
+CREATE OR REPLACE VIEW view_pending_requests AS
+SELECT
+    r.request_id,
+    rp.recipient_name,
+    h.hospital_name,
+    bg.group_name AS blood_group,
+    r.units_required,
+    r.status
+FROM requests r
+JOIN recipients rp ON r.recipient_id = rp.recipient_id
+JOIN hospitals h ON r.hospital_id = h.hospital_id
+JOIN blood_groups bg ON r.blood_group_id = bg.blood_group_id
+WHERE r.status = 'Pending';
+
+-- 5. view_total_donations
+
+CREATE OR REPLACE VIEW view_total_donations AS
+SELECT
+    d.donor_id,
+    d.donor_name,
+    COUNT(dn.donation_id) AS total_donations
+FROM donors d
+LEFT JOIN donations dn ON d.donor_id = dn.donor_id
+GROUP BY d.donor_id, d.donor_name;
+
+-- 6. view_request_fulfilment
+
+CREATE OR REPLACE VIEW view_request_fulfilment AS
+SELECT
+    r.request_id,
+    h.hospital_name,
+    bb.bank_name,
+    bg.group_name AS blood_group,
+    r.units_required,
+    r.status
+FROM requests r
+JOIN hospitals h ON r.hospital_id = h.hospital_id
+JOIN blood_groups bg ON r.blood_group_id = bg.blood_group_id
+LEFT JOIN blood_banks bb ON r.bank_id = bb.bank_id;
+
+-- =====================================================
+-- PART 5 : STORED PROCEDURES
+-- =====================================================
+
+-- PROCEDURE NAME : sp_get_donor_history
+-- USE            : Shows all donations made by one donor. Input: donor_id.
+
+DROP PROCEDURE IF EXISTS sp_get_donor_history;
+
+DELIMITER $$
+
+CREATE PROCEDURE sp_get_donor_history
+(
+IN p_donor_id INT
+)
+BEGIN
+
+SELECT *
+FROM donations
+WHERE donor_id = p_donor_id;
+
+END $$
+
+DELIMITER ;
+
+-- ----------------------------------------------------
+
+-- PROCEDURE NAME : sp_available_blood
+-- USE            : Lists banks holding a blood group and their units. Input: blood group, e.g. A+.
+
+DROP PROCEDURE IF EXISTS sp_available_blood;
+
+DELIMITER $$
+
+CREATE PROCEDURE sp_available_blood
+(
+IN p_group VARCHAR(3)
+)
+BEGIN
+
+SELECT bi.inventory_id, bi.bank_id, bg.group_name AS blood_group, bi.units_available
+FROM blood_inventory bi
+JOIN blood_groups bg ON bi.blood_group_id = bg.blood_group_id
+WHERE bg.group_name = p_group;
+
+END $$
+
+DELIMITER ;
+
+-- ----------------------------------------------------
+
+-- PROCEDURE NAME : sp_pending_requests
+-- USE            : Lists all requests that are still Pending. No input.
+
+DROP PROCEDURE IF EXISTS sp_pending_requests;
+
+DELIMITER $$
+
+CREATE PROCEDURE sp_pending_requests()
+BEGIN
+
+SELECT r.request_id, r.recipient_id, r.hospital_id, bg.group_name AS blood_group,
+       r.units_required, r.request_date, r.status
+FROM requests r
+JOIN blood_groups bg ON r.blood_group_id = bg.blood_group_id
+WHERE r.status = 'Pending';
+
+END $$
+
+DELIMITER ;
+
+-- ----------------------------------------------------
+
+-- PROCEDURE NAME : sp_donors_by_city
+-- USE            : Lists donors living in a city. Input: city name.
+
+DROP PROCEDURE IF EXISTS sp_donors_by_city;
+
+DELIMITER $$
+
+CREATE PROCEDURE sp_donors_by_city
+(
+IN p_city VARCHAR(50)
+)
+BEGIN
+
+SELECT d.donor_id, d.donor_name, d.gender, bg.group_name AS blood_group,
+       d.age, d.phone, d.email, d.city
+FROM donors d
+JOIN blood_groups bg ON d.blood_group_id = bg.blood_group_id
+WHERE d.city = p_city;
+
+END $$
+
+DELIMITER ;
+
+-- ----------------------------------------------------
+
+-- PROCEDURE NAME : sp_bloodbank_stock
+-- USE            : Shows the stock held by one blood bank. Input: bank_id.
+
+DROP PROCEDURE IF EXISTS sp_bloodbank_stock;
+
+DELIMITER $$
+
+CREATE PROCEDURE sp_bloodbank_stock
+(
+IN p_bank INT
+)
+BEGIN
+
+SELECT bi.inventory_id, bi.bank_id, bg.group_name AS blood_group, bi.units_available
+FROM blood_inventory bi
+JOIN blood_groups bg ON bi.blood_group_id = bg.blood_group_id
+WHERE bi.bank_id = p_bank;
+
+END $$
+
+DELIMITER ;
+
+-- ----------------------------------------------------
+-- PROCEDURE NAME : sp_approve_request
+-- USE            : Assigns a blood bank to a Pending request and marks it Approved. Input: request_id, bank_id.
+
+DROP PROCEDURE IF EXISTS sp_approve_request;
+
+DELIMITER $$
+
+CREATE PROCEDURE sp_approve_request
+(
+IN p_request_id INT,
+IN p_bank_id INT
+)
+BEGIN
+
+UPDATE requests
+SET bank_id = p_bank_id,
+    status = 'Approved'
+WHERE request_id = p_request_id
+AND status = 'Pending';
+
+END $$
+
+DELIMITER ;
+
+-- =====================================================
+-- PART 6 : TRIGGERS
+-- =====================================================
+
+-- TABLE NAME : donation_log
+-- USE        : Supporting table. Stores a log row each time a donation is inserted.
+
+CREATE TABLE donation_log
+(
+    log_id INT AUTO_INCREMENT PRIMARY KEY,
+    donor_id INT,
+    units_donated INT,
+    action_date DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+--  ----------------------------------------------------
+
+-- TRIGGER NAME : trg_log_donation
+-- USE          : Fires AFTER INSERT on donations. Writes a row to donation_log for every donation.
+
+DROP TRIGGER IF EXISTS trg_log_donation;
+
+DELIMITER $$
+
+CREATE TRIGGER trg_log_donation
+AFTER INSERT
+ON donations
+FOR EACH ROW
+BEGIN
+
+INSERT INTO donation_log
+(donor_id, units_donated)
+VALUES
+(NEW.donor_id, NEW.units_donated);
+
+END $$
+
+DELIMITER ;
+
+-- ----------------------------------------------------
+-- TRIGGER NAME : trg_add_stock_on_donation
+-- USE          : Fires AFTER INSERT on donations. Adds the donated units to that bank's inventory for the donor's blood group.
+
+DROP TRIGGER IF EXISTS trg_add_stock_on_donation;
+
+DELIMITER $$
+
+CREATE TRIGGER trg_add_stock_on_donation
+AFTER INSERT
+ON donations
+FOR EACH ROW
+BEGIN
+
+INSERT INTO blood_inventory (bank_id, blood_group_id, units_available)
+SELECT NEW.bank_id, d.blood_group_id, NEW.units_donated
+FROM donors d
+WHERE d.donor_id = NEW.donor_id
+ON DUPLICATE KEY UPDATE
+units_available = units_available + NEW.units_donated;
+
+END $$
+
+DELIMITER ;
+
+-- ----------------------------------------------------
+
+-- TRIGGER NAME : trg_prevent_negative_units
+-- USE          : Fires BEFORE UPDATE on blood_inventory. Blocks stock from going below zero.
+
+DROP TRIGGER IF EXISTS trg_prevent_negative_units;
+
+DELIMITER $$
+
+CREATE TRIGGER trg_prevent_negative_units
+BEFORE UPDATE
+ON blood_inventory
+FOR EACH ROW
+BEGIN
+
+IF NEW.units_available < 0 THEN
+
+SIGNAL SQLSTATE '45000'
+SET MESSAGE_TEXT='Units Cannot Be Negative';
+
+END IF;
+
+END $$
+
+DELIMITER ;
+
+-- ----------------------------------------------------
+-- TRIGGER NAME : trg_reduce_stock_on_complete
+-- USE          : Fires AFTER UPDATE on requests. When a request becomes Completed, subtracts its units from the assigned bank's stock.
+
+DROP TRIGGER IF EXISTS trg_reduce_stock_on_complete;
+
+DELIMITER $$
+
+CREATE TRIGGER trg_reduce_stock_on_complete
+AFTER UPDATE
+ON requests
+FOR EACH ROW
+BEGIN
+
+IF NEW.status = 'Completed'
+AND OLD.status <> 'Completed'
+AND NEW.bank_id IS NOT NULL THEN
+
+UPDATE blood_inventory
+SET units_available = units_available - NEW.units_required
+WHERE bank_id = NEW.bank_id
+AND blood_group_id = NEW.blood_group_id;
+
+END IF;
+
+END $$
+
+DELIMITER ;
+
+-- NOTE: trg_default_request_status from version 1 is no longer needed,
+-- because requests.status now has DEFAULT 'Pending'.
+
+
+-- =====================================================
+-- PART 7 : QUERY BANK - LEVEL 1
+-- SIMPLE QUERIES
+-- =====================================================
+
+-- Q1 Display all donors with blood group
+
+SELECT d.donor_name, bg.group_name AS blood_group
+FROM donors d
+JOIN blood_groups bg ON d.blood_group_id = bg.blood_group_id;
+
+-- OUTPUT:-
++---------------+-------------+
+| donor_name    | blood_group |
++---------------+-------------+
+| Ravi Kumar    | A+          |
+| Siva Prasad   | O+          |
+| Lakshmi Devi  | B+          |
+| Pavan Kumar   | AB+         |
+| Harika Reddy  | O-          |
+| Sai Teja      | A+          |
+| Kiran Kumar   | B-          |
+| Anusha        | AB-         |
+| Vamsi Krishna | O+          |
+| Deepika       | A-          |
++---------------+-------------+
+10 rows in set
+
+------------------------------------------------------
+
+-- Q2 Display all blood banks
+
+SELECT *
+FROM blood_banks;
+
+-- OUTPUT:-
++---------+----------------------+-------------------+------------+
+| bank_id | bank_name            | location          | contact_no |
++---------+----------------------+-------------------+------------+
+|       1 | Red Cross Blood Bank | Visakhapatnam     | 220001     |
+|       2 | Life Care Blood Bank | Vijayawada        | 220002     |
+|       3 | Jeevan Blood Center  | Guntur            | 220003     |
+|       4 | Apollo Blood Bank    | Tirupati          | 220004     |
+|       5 | Arogya Blood Bank    | Kakinada          | 220005     |
+|       6 | LifeLine Blood Bank  | Rajamahendravaram | 220006     |
+|       7 | Save Life Blood Bank | Nellore           | 220007     |
+|       8 | Blood Care Center    | Anantapur         | 220008     |
+|       9 | Universal Blood Bank | Kurnool           | 220009     |
+|      10 | Hope Blood Bank      | Srikakulam        | 220010     |
++---------+----------------------+-------------------+------------+
+10 rows in set
+
+------------------------------------------------------
+
+-- Q3 Display all pending requests
+
+SELECT r.request_id, r.recipient_id, r.hospital_id, r.bank_id,
+       bg.group_name AS blood_group, r.units_required, r.request_date, r.status
+FROM requests r
+JOIN blood_groups bg ON r.blood_group_id = bg.blood_group_id
+WHERE r.status = 'Pending';
+
+-- OUTPUT:-
++------------+--------------+-------------+---------+-------------+----------------+--------------+---------+
+| request_id | recipient_id | hospital_id | bank_id | blood_group | units_required | request_date | status  |
++------------+--------------+-------------+---------+-------------+----------------+--------------+---------+
+|          3 |            3 |           3 | NULL    | O+          |              3 | 2025-05-03   | Pending |
+|          6 |            6 |           6 | NULL    | A-          |              2 | 2025-05-06   | Pending |
+|          9 |            9 |           9 | NULL    | O+          |              3 | 2025-05-09   | Pending |
++------------+--------------+-------------+---------+-------------+----------------+--------------+---------+
+3 rows in set
+
+------------------------------------------------------
+
+-- =====================================================
+-- PART 8 : QUERY BANK - LEVEL 2
+-- INTERMEDIATE QUERIES
+-- =====================================================
+
+-- Q4 Donor donation details
+
+SELECT d.donor_name, dn.units_donated
+FROM donors d
+JOIN donations dn ON d.donor_id = dn.donor_id;
+
+-- OUTPUT:-
++---------------+---------------+
+| donor_name    | units_donated |
++---------------+---------------+
+| Ravi Kumar    |             2 |
+| Siva Prasad   |             1 |
+| Lakshmi Devi  |             2 |
+| Pavan Kumar   |             1 |
+| Harika Reddy  |             3 |
+| Sai Teja      |             2 |
+| Kiran Kumar   |             1 |
+| Anusha        |             2 |
+| Vamsi Krishna |             3 |
+| Deepika       |             1 |
++---------------+---------------+
+10 rows in set
+
+------------------------------------------------------
+
+-- Q5 Total blood available by group
+
+SELECT bg.group_name AS blood_group, SUM(bi.units_available) AS total_units
+FROM blood_inventory bi
+JOIN blood_groups bg ON bi.blood_group_id = bg.blood_group_id
+GROUP BY bg.group_name
+ORDER BY bg.group_name;
+
+-- OUTPUT:-
++-------------+-------------+
+| blood_group | total_units |
++-------------+-------------+
+| A+          |          45 |
+| A-          |          16 |
+| AB+         |          15 |
+| AB-         |           8 |
+| B+          |          18 |
+| B-          |          14 |
+| O+          |          50 |
+| O-          |          10 |
++-------------+-------------+
+8 rows in set
+
+------------------------------------------------------
+
+-- Q6 Number of donors by city
+
+SELECT city, COUNT(*) AS total_donors
+FROM donors
+GROUP BY city
+ORDER BY city;
+
+-- OUTPUT:-
++-------------------+--------------+
+| city              | total_donors |
++-------------------+--------------+
+| Anantapur         |            1 |
+| Guntur            |            1 |
+| Kakinada          |            1 |
+| Kurnool           |            1 |
+| Nellore           |            1 |
+| Rajamahendravaram |            1 |
+| Srikakulam        |            1 |
+| Tirupati          |            1 |
+| Vijayawada        |            1 |
+| Visakhapatnam     |            1 |
++-------------------+--------------+
+10 rows in set
+
+------------------------------------------------------
+
+-- =====================================================
+-- PART 9 : QUERY BANK - LEVEL 3
+-- COMPLEX QUERIES
+-- =====================================================
+
+-- Q7 Top donor (most units donated)
+
+SELECT donor_name
+FROM donors
+WHERE donor_id =
+(
+    SELECT donor_id
+    FROM donations
+    GROUP BY donor_id
+    ORDER BY SUM(units_donated) DESC, donor_id
+    LIMIT 1
+);
+
+-- OUTPUT:-
++--------------+
+| donor_name   |
++--------------+
+| Harika Reddy |
++--------------+
+1 row in set
+
+------------------------------------------------------
+
+-- Q8 Average blood stock by group
+
+SELECT bg.group_name AS blood_group, AVG(bi.units_available) AS average_units
+FROM blood_inventory bi
+JOIN blood_groups bg ON bi.blood_group_id = bg.blood_group_id
+GROUP BY bg.group_name
+ORDER BY bg.group_name;
+
+-- OUTPUT:-
++-------------+---------------+
+| blood_group | average_units |
++-------------+---------------+
+| A+          |       22.5000 |
+| A-          |       16.0000 |
+| AB+         |       15.0000 |
+| AB-         |        8.0000 |
+| B+          |       18.0000 |
+| B-          |       14.0000 |
+| O+          |       25.0000 |
+| O-          |       10.0000 |
++-------------+---------------+
+8 rows in set
+
+------------------------------------------------------
+
+-- =====================================================
+-- PART 10 : QUERY BANK - NEW QUERIES
+-- =====================================================
+
+-- Q9 Display donors whose blood group is O+
+
+SELECT d.donor_id, d.donor_name, d.gender, bg.group_name AS blood_group, d.age, d.phone, d.email, d.city
+FROM donors d
+JOIN blood_groups bg ON d.blood_group_id = bg.blood_group_id
+WHERE bg.group_name = 'O+';
+
+-- OUTPUT:-
++----------+---------------+--------+-------------+-----+------------+-----------------+------------+
+| donor_id | donor_name    | gender | blood_group | age | phone      | email           | city       |
++----------+---------------+--------+-------------+-----+------------+-----------------+------------+
+|        2 | Siva Prasad   | Male   | O+          |  26 | 9000000002 | siva@gmail.com  | Vijayawada |
+|        9 | Vamsi Krishna | Male   | O+          |  27 | 9000000009 | vamsi@gmail.com | Kurnool    |
++----------+---------------+--------+-------------+-----+------------+-----------------+------------+
+2 rows in set
+
+------------------------------------------------------
+
+-- Q10 Display donors whose age is above 25
+
+SELECT d.donor_id, d.donor_name, d.gender, bg.group_name AS blood_group, d.age, d.phone, d.email, d.city
+FROM donors d
+JOIN blood_groups bg ON d.blood_group_id = bg.blood_group_id
+WHERE d.age > 25;
+
+-- OUTPUT:-
++----------+---------------+--------+-------------+-----+------------+-------------------+-------------------+
+| donor_id | donor_name    | gender | blood_group | age | phone      | email             | city              |
++----------+---------------+--------+-------------+-----+------------+-------------------+-------------------+
+|        2 | Siva Prasad   | Male   | O+          |  26 | 9000000002 | siva@gmail.com    | Vijayawada        |
+|        4 | Pavan Kumar   | Male   | AB+         |  29 | 9000000004 | pavan@gmail.com   | Tirupati          |
+|        6 | Sai Teja      | Male   | A+          |  28 | 9000000006 | saiteja@gmail.com | Rajamahendravaram |
+|        7 | Kiran Kumar   | Male   | B-          |  30 | 9000000007 | kiran@gmail.com   | Nellore           |
+|        9 | Vamsi Krishna | Male   | O+          |  27 | 9000000009 | vamsi@gmail.com   | Kurnool           |
++----------+---------------+--------+-------------+-----+------------+-------------------+-------------------+
+5 rows in set
+
+------------------------------------------------------
+
+-- Q11 Display donors ordered by name
+
+SELECT d.donor_id, d.donor_name, d.gender, bg.group_name AS blood_group, d.age, d.city
+FROM donors d
+JOIN blood_groups bg ON d.blood_group_id = bg.blood_group_id
+ORDER BY d.donor_name;
+
+-- OUTPUT:-
++----------+---------------+--------+-------------+-----+-------------------+
+| donor_id | donor_name    | gender | blood_group | age | city              |
++----------+---------------+--------+-------------+-----+-------------------+
+|        8 | Anusha        | Female | AB-         |  21 | Anantapur         |
+|       10 | Deepika       | Female | A-          |  24 | Srikakulam        |
+|        5 | Harika Reddy  | Female | O-          |  25 | Kakinada          |
+|        7 | Kiran Kumar   | Male   | B-          |  30 | Nellore           |
+|        3 | Lakshmi Devi  | Female | B+          |  22 | Guntur            |
+|        4 | Pavan Kumar   | Male   | AB+         |  29 | Tirupati          |
+|        1 | Ravi Kumar    | Male   | A+          |  24 | Visakhapatnam     |
+|        6 | Sai Teja      | Male   | A+          |  28 | Rajamahendravaram |
+|        2 | Siva Prasad   | Male   | O+          |  26 | Vijayawada        |
+|        9 | Vamsi Krishna | Male   | O+          |  27 | Kurnool           |
++----------+---------------+--------+-------------+-----+-------------------+
+10 rows in set
+
+------------------------------------------------------
+
+-- Q12 Display number of donors in each city
+
+SELECT city, COUNT(*) AS total_donors
+FROM donors
+GROUP BY city
+ORDER BY city;
+
+-- OUTPUT:-
++-------------------+--------------+
+| city              | total_donors |
++-------------------+--------------+
+| Anantapur         |            1 |
+| Guntur            |            1 |
+| Kakinada          |            1 |
+| Kurnool           |            1 |
+| Nellore           |            1 |
+| Rajamahendravaram |            1 |
+| Srikakulam        |            1 |
+| Tirupati          |            1 |
+| Vijayawada        |            1 |
+| Visakhapatnam     |            1 |
++-------------------+--------------+
+10 rows in set
+
+------------------------------------------------------
+
+-- Q13 Display highest stock
+
+SELECT MAX(units_available) AS highest_stock
+FROM blood_inventory;
+
+-- OUTPUT:-
++---------------+
+| highest_stock |
++---------------+
+|            28 |
++---------------+
+1 row in set
+
+------------------------------------------------------
+
+-- Q14 Display lowest stock
+
+SELECT MIN(units_available) AS lowest_stock
+FROM blood_inventory;
+
+-- OUTPUT:-
++--------------+
+| lowest_stock |
++--------------+
+|            8 |
++--------------+
+1 row in set
+
+------------------------------------------------------
+
+-- Q15 Display approved requests
+
+SELECT r.request_id, r.recipient_id, r.hospital_id, r.bank_id,
+       bg.group_name AS blood_group, r.units_required, r.request_date, r.status
+FROM requests r
+JOIN blood_groups bg ON r.blood_group_id = bg.blood_group_id
+WHERE r.status = 'Approved';
+
+-- OUTPUT:-
++------------+--------------+-------------+---------+-------------+----------------+--------------+----------+
+| request_id | recipient_id | hospital_id | bank_id | blood_group | units_required | request_date | status   |
++------------+--------------+-------------+---------+-------------+----------------+--------------+----------+
+|          2 |            2 |           2 |       3 | B+          |              1 | 2025-05-02   | Approved |
+|          5 |            5 |           5 |       5 | O-          |              1 | 2025-05-05   | Approved |
+|          8 |            8 |           8 |       8 | AB-         |              2 | 2025-05-08   | Approved |
++------------+--------------+-------------+---------+-------------+----------------+--------------+----------+
+3 rows in set
+
+------------------------------------------------------
+
+-- Q16 Display completed requests
+
+SELECT r.request_id, r.recipient_id, r.hospital_id, r.bank_id,
+       bg.group_name AS blood_group, r.units_required, r.request_date, r.status
+FROM requests r
+JOIN blood_groups bg ON r.blood_group_id = bg.blood_group_id
+WHERE r.status = 'Completed';
+
+-- OUTPUT:-
++------------+--------------+-------------+---------+-------------+----------------+--------------+-----------+
+| request_id | recipient_id | hospital_id | bank_id | blood_group | units_required | request_date | status    |
++------------+--------------+-------------+---------+-------------+----------------+--------------+-----------+
+|          1 |            1 |           1 |       1 | A+          |              2 | 2025-05-01   | Completed |
+|          4 |            4 |           4 |       4 | AB+         |              2 | 2025-05-04   | Completed |
+|          7 |            7 |           7 |       7 | B-          |              1 | 2025-05-07   | Completed |
+|         10 |           10 |          10 |       1 | A+          |              2 | 2025-05-10   | Completed |
++------------+--------------+-------------+---------+-------------+----------------+--------------+-----------+
+4 rows in set
+
+------------------------------------------------------
+
+-- Q17 Display donor count for each blood group
+
+SELECT bg.group_name AS blood_group, COUNT(*) AS total_donors
+FROM donors d
+JOIN blood_groups bg ON d.blood_group_id = bg.blood_group_id
+GROUP BY bg.group_name
+ORDER BY bg.group_name;
+
+-- OUTPUT:-
++-------------+--------------+
+| blood_group | total_donors |
++-------------+--------------+
+| A+          |            2 |
+| A-          |            1 |
+| AB+         |            1 |
+| AB-         |            1 |
+| B+          |            1 |
+| B-          |            1 |
+| O+          |            2 |
+| O-          |            1 |
++-------------+--------------+
+8 rows in set
+
+------------------------------------------------------
+
+-- Q18 Display blood banks and locations
+
+SELECT bank_name, location
+FROM blood_banks;
+
+-- OUTPUT:-
++----------------------+-------------------+
+| bank_name            | location          |
++----------------------+-------------------+
+| Red Cross Blood Bank | Visakhapatnam     |
+| Life Care Blood Bank | Vijayawada        |
+| Jeevan Blood Center  | Guntur            |
+| Apollo Blood Bank    | Tirupati          |
+| Arogya Blood Bank    | Kakinada          |
+| LifeLine Blood Bank  | Rajamahendravaram |
+| Save Life Blood Bank | Nellore           |
+| Blood Care Center    | Anantapur         |
+| Universal Blood Bank | Kurnool           |
+| Hope Blood Bank      | Srikakulam        |
++----------------------+-------------------+
+10 rows in set
+
+------------------------------------------------------
+
+-- Q19 NEW: Which blood bank fulfils each request
+
+SELECT r.request_id, h.hospital_name, bb.bank_name, bg.group_name AS blood_group, r.status
+FROM requests r
+JOIN hospitals h ON r.hospital_id = h.hospital_id
+JOIN blood_groups bg ON r.blood_group_id = bg.blood_group_id
+LEFT JOIN blood_banks bb ON r.bank_id = bb.bank_id
+ORDER BY r.request_id;
+
+-- OUTPUT:-
++------------+-----------------------------+----------------------+-------------+-----------+
+| request_id | hospital_name               | bank_name            | blood_group | status    |
++------------+-----------------------------+----------------------+-------------+-----------+
+|          1 | KIMS Hospital               | Red Cross Blood Bank | A+          | Completed |
+|          2 | Andhra Hospital             | Jeevan Blood Center  | B+          | Approved  |
+|          3 | Ramesh Hospital             | NULL                 | O+          | Pending   |
+|          4 | SVIMS Hospital              | Apollo Blood Bank    | AB+         | Completed |
+|          5 | Apollo Hospital             | Arogya Blood Bank    | O-          | Approved  |
+|          6 | Government General Hospital | NULL                 | A-          | Pending   |
+|          7 | Medico Hospital             | Save Life Blood Bank | B-          | Completed |
+|          8 | Life Care Hospital          | Blood Care Center    | AB-         | Approved  |
+|          9 | Sunrise Hospital            | NULL                 | O+          | Pending   |
+|         10 | Hope Hospital               | Red Cross Blood Bank | A+          | Completed |
++------------+-----------------------------+----------------------+-------------+-----------+
+10 rows in set
+
+------------------------------------------------------
+
+-- Q20 NEW: Units supplied to each hospital by each blood bank
+
+SELECT h.hospital_name, bb.bank_name, SUM(r.units_required) AS units_supplied
+FROM requests r
+JOIN hospitals h ON r.hospital_id = h.hospital_id
+JOIN blood_banks bb ON r.bank_id = bb.bank_id
+WHERE r.status IN ('Approved','Completed')
+GROUP BY h.hospital_name, bb.bank_name
+ORDER BY h.hospital_name;
+
+-- OUTPUT:-
++--------------------+----------------------+----------------+
+| hospital_name      | bank_name            | units_supplied |
++--------------------+----------------------+----------------+
+| Andhra Hospital    | Jeevan Blood Center  |              1 |
+| Apollo Hospital    | Arogya Blood Bank    |              1 |
+| Hope Hospital      | Red Cross Blood Bank |              2 |
+| KIMS Hospital      | Red Cross Blood Bank |              2 |
+| Life Care Hospital | Blood Care Center    |              2 |
+| Medico Hospital    | Save Life Blood Bank |              1 |
+| SVIMS Hospital     | Apollo Blood Bank    |              2 |
++--------------------+----------------------+----------------+
+7 rows in set
+
+------------------------------------------------------
+
+-- Q21 NEW: Hospitals with the most pending requests
+
+SELECT h.hospital_name, COUNT(*) AS pending_requests
+FROM requests r
+JOIN hospitals h ON r.hospital_id = h.hospital_id
+WHERE r.status = 'Pending'
+GROUP BY h.hospital_name
+ORDER BY pending_requests DESC, h.hospital_name;
+
+-- OUTPUT:-
++-----------------------------+------------------+
+| hospital_name               | pending_requests |
++-----------------------------+------------------+
+| Government General Hospital |                1 |
+| Ramesh Hospital             |                1 |
+| Sunrise Hospital            |                1 |
++-----------------------------+------------------+
+3 rows in set
+
+------------------------------------------------------
+
+-- =====================================================
+-- PART 11 : DEMO CALLS
+-- =====================================================
+
+-- View Demonstrations
+------------------------------------------------------
+
+-- 1. view_donor_details
+-- USE: Shows each donor with blood group, city and last donation date (calculated from donations). Use it to find donors and check who is eligible to donate again.
+
+SELECT * FROM view_donor_details;
+
+-- OUTPUT:-
++----------+---------------+-------------+-------------------+--------------------+
+| donor_id | donor_name    | blood_group | city              | last_donation_date |
++----------+---------------+-------------+-------------------+--------------------+
+|        1 | Ravi Kumar    | A+          | Visakhapatnam     | 2025-01-10         |
+|        2 | Siva Prasad   | O+          | Vijayawada        | 2025-02-10         |
+|        3 | Lakshmi Devi  | B+          | Guntur            | 2025-03-05         |
+|        4 | Pavan Kumar   | AB+         | Tirupati          | 2025-01-22         |
+|        5 | Harika Reddy  | O-          | Kakinada          | 2025-02-14         |
+|        6 | Sai Teja      | A+          | Rajamahendravaram | 2025-03-18         |
+|        7 | Kiran Kumar   | B-          | Nellore           | 2025-01-15         |
+|        8 | Anusha        | AB-         | Anantapur         | 2025-04-01         |
+|        9 | Vamsi Krishna | O+          | Kurnool           | 2025-02-28         |
+|       10 | Deepika       | A-          | Srikakulam        | 2025-03-20         |
++----------+---------------+-------------+-------------------+--------------------+
+10 rows in set
+
+------------------------------------------------------
+
+-- 2. view_blood_stock
+-- USE: Shows blood stock for every blood bank by blood group. Use it to check which bank has the units you need.
+
+SELECT * FROM view_blood_stock;
+
+-- OUTPUT:-
++----------------------+-------------------+-------------+-----------------+
+| bank_name            | location          | blood_group | units_available |
++----------------------+-------------------+-------------+-----------------+
+| Red Cross Blood Bank | Visakhapatnam     | A+          |              20 |
+| Life Care Blood Bank | Vijayawada        | O+          |              22 |
+| Jeevan Blood Center  | Guntur            | B+          |              18 |
+| Apollo Blood Bank    | Tirupati          | AB+         |              15 |
+| Arogya Blood Bank    | Kakinada          | O-          |              10 |
+| LifeLine Blood Bank  | Rajamahendravaram | A+          |              25 |
+| Save Life Blood Bank | Nellore           | B-          |              14 |
+| Blood Care Center    | Anantapur         | AB-         |               8 |
+| Universal Blood Bank | Kurnool           | O+          |              28 |
+| Hope Blood Bank      | Srikakulam        | A-          |              16 |
++----------------------+-------------------+-------------+-----------------+
+10 rows in set
+
+------------------------------------------------------
+
+-- 3. view_donation_history
+-- USE: Shows who donated, to which blood bank, on what date and how many units. Use it for donation reports and audit.
+
+SELECT * FROM view_donation_history;
+
+-- OUTPUT:-
++---------------+----------------------+---------------+---------------+
+| donor_name    | bank_name            | donation_date | units_donated |
++---------------+----------------------+---------------+---------------+
+| Ravi Kumar    | Red Cross Blood Bank | 2025-01-10    |             2 |
+| Siva Prasad   | Life Care Blood Bank | 2025-02-10    |             1 |
+| Lakshmi Devi  | Jeevan Blood Center  | 2025-03-05    |             2 |
+| Pavan Kumar   | Apollo Blood Bank    | 2025-01-22    |             1 |
+| Harika Reddy  | Arogya Blood Bank    | 2025-02-14    |             3 |
+| Sai Teja      | LifeLine Blood Bank  | 2025-03-18    |             2 |
+| Kiran Kumar   | Save Life Blood Bank | 2025-01-15    |             1 |
+| Anusha        | Blood Care Center    | 2025-04-01    |             2 |
+| Vamsi Krishna | Universal Blood Bank | 2025-02-28    |             3 |
+| Deepika       | Hope Blood Bank      | 2025-03-20    |             1 |
++---------------+----------------------+---------------+---------------+
+10 rows in set
+
+------------------------------------------------------
+
+-- 4. view_pending_requests
+-- USE: Shows all requests still waiting for approval, with recipient, hospital and blood group. Use it to see which requests need action.
+
+SELECT * FROM view_pending_requests;
+
+-- OUTPUT:-
++------------+----------------+-----------------------------+-------------+----------------+---------+
+| request_id | recipient_name | hospital_name               | blood_group | units_required | status  |
++------------+----------------+-----------------------------+-------------+----------------+---------+
+|          3 | Manoj Kumar    | Ramesh Hospital             | O+          |              3 | Pending |
+|          6 | Raju           | Government General Hospital | A-          |              2 | Pending |
+|          9 | Prasad         | Sunrise Hospital            | O+          |              3 | Pending |
++------------+----------------+-----------------------------+-------------+----------------+---------+
+3 rows in set
+
+------------------------------------------------------
+
+-- 5. view_total_donations
+-- USE: Shows how many times each donor has donated. Use it to find regular donors and for appreciation or ranking.
+
+SELECT * FROM view_total_donations;
+
+-- OUTPUT:-
++----------+---------------+-----------------+
+| donor_id | donor_name    | total_donations |
++----------+---------------+-----------------+
+|        1 | Ravi Kumar    |               1 |
+|        2 | Siva Prasad   |               1 |
+|        3 | Lakshmi Devi  |               1 |
+|        4 | Pavan Kumar   |               1 |
+|        5 | Harika Reddy  |               1 |
+|        6 | Sai Teja      |               1 |
+|        7 | Kiran Kumar   |               1 |
+|        8 | Anusha        |               1 |
+|        9 | Vamsi Krishna |               1 |
+|       10 | Deepika       |               1 |
++----------+---------------+-----------------+
+10 rows in set
+
+------------------------------------------------------
+
+-- 6. view_request_fulfilment
+-- USE: Shows each request with the hospital and the blood bank that fulfils it (bank is NULL while Pending). Use it to link hospitals with blood banks.
+
+SELECT * FROM view_request_fulfilment;
+
+-- OUTPUT:-
++------------+-----------------------------+----------------------+-------------+----------------+-----------+
+| request_id | hospital_name               | bank_name            | blood_group | units_required | status    |
++------------+-----------------------------+----------------------+-------------+----------------+-----------+
+|          1 | KIMS Hospital               | Red Cross Blood Bank | A+          |              2 | Completed |
+|          2 | Andhra Hospital             | Jeevan Blood Center  | B+          |              1 | Approved  |
+|          3 | Ramesh Hospital             | NULL                 | O+          |              3 | Pending   |
+|          4 | SVIMS Hospital              | Apollo Blood Bank    | AB+         |              2 | Completed |
+|          5 | Apollo Hospital             | Arogya Blood Bank    | O-          |              1 | Approved  |
+|          6 | Government General Hospital | NULL                 | A-          |              2 | Pending   |
+|          7 | Medico Hospital             | Save Life Blood Bank | B-          |              1 | Completed |
+|          8 | Life Care Hospital          | Blood Care Center    | AB-         |              2 | Approved  |
+|          9 | Sunrise Hospital            | NULL                 | O+          |              3 | Pending   |
+|         10 | Hope Hospital               | Red Cross Blood Bank | A+          |              2 | Completed |
++------------+-----------------------------+----------------------+-------------+----------------+-----------+
+10 rows in set
+
+------------------------------------------------------
+
+-- Stored Procedure Demonstrations
+------------------------------------------------------
+
+-- 1. PROCEDURE: sp_get_donor_history
+-- USE : Shows all donations made by one donor. Input: donor_id.
+
+CALL sp_get_donor_history(1);
+
+-- OUTPUT:-
++-------------+----------+---------+---------------+---------------+
+| donation_id | donor_id | bank_id | donation_date | units_donated |
++-------------+----------+---------+---------------+---------------+
+|           1 |        1 |       1 | 2025-01-10    |             2 |
++-------------+----------+---------+---------------+---------------+
+1 row in set
+
+------------------------------------------------------
+
+-- 2. PROCEDURE: sp_available_blood
+-- USE : Lists banks holding a blood group and their units. Input: blood group, e.g. A+.
+
+CALL sp_available_blood('A+');
+
+-- OUTPUT:-
++--------------+---------+-------------+-----------------+
+| inventory_id | bank_id | blood_group | units_available |
++--------------+---------+-------------+-----------------+
+|            1 |       1 | A+          |              20 |
+|            6 |       6 | A+          |              25 |
++--------------+---------+-------------+-----------------+
+2 rows in set
+
+------------------------------------------------------
+
+-- 3. PROCEDURE: sp_pending_requests
+-- USE : Lists all requests that are still Pending. No input.
+
+CALL sp_pending_requests();
+
+-- OUTPUT:-
++------------+--------------+-------------+-------------+----------------+--------------+---------+
+| request_id | recipient_id | hospital_id | blood_group | units_required | request_date | status  |
++------------+--------------+-------------+-------------+----------------+--------------+---------+
+|          3 |            3 |           3 | O+          |              3 | 2025-05-03   | Pending |
+|          6 |            6 |           6 | A-          |              2 | 2025-05-06   | Pending |
+|          9 |            9 |           9 | O+          |              3 | 2025-05-09   | Pending |
++------------+--------------+-------------+-------------+----------------+--------------+---------+
+3 rows in set
+
+------------------------------------------------------
+
+-- 4. PROCEDURE: sp_donors_by_city
+-- USE : Lists donors living in a city. Input: city name.
+
+CALL sp_donors_by_city('Guntur');
+
+-- OUTPUT:-
++----------+--------------+--------+-------------+-----+------------+-------------------+--------+
+| donor_id | donor_name   | gender | blood_group | age | phone      | email             | city   |
++----------+--------------+--------+-------------+-----+------------+-------------------+--------+
+|        3 | Lakshmi Devi | Female | B+          |  22 | 9000000003 | lakshmi@gmail.com | Guntur |
++----------+--------------+--------+-------------+-----+------------+-------------------+--------+
+1 row in set
+
+------------------------------------------------------
+
+-- 5. PROCEDURE: sp_bloodbank_stock
+-- USE : Shows the stock held by one blood bank. Input: bank_id.
+
+CALL sp_bloodbank_stock(1);
+
+-- OUTPUT:-
++--------------+---------+-------------+-----------------+
+| inventory_id | bank_id | blood_group | units_available |
++--------------+---------+-------------+-----------------+
+|            1 |       1 | A+          |              20 |
++--------------+---------+-------------+-----------------+
+1 row in set
+
+------------------------------------------------------
+
+-- 6. PROCEDURE: sp_approve_request
+-- USE : Assigns a blood bank to a Pending request and marks it Approved.
+
+CALL sp_approve_request(3, 2);
+
+SELECT request_id, bank_id, status FROM requests WHERE request_id = 3;
+
+-- EXPECTED RESULT:-
+-- request_id = 3, bank_id = 2, status = 'Approved'
+
+------------------------------------------------------
+
+-- Trigger Demonstration 1
+-- TRIGGERS: trg_log_donation, trg_add_stock_on_donation
+-- USE : a new donation is logged and adds stock to the bank
+-- Before: blood bank 1 holds 20 units of A+ (blood_group_id 1)
+
+INSERT INTO donations
+(donor_id, bank_id, donation_date, units_donated)
+VALUES
+(1, 1, CURDATE(), 4);
+
+SELECT * FROM donation_log;
+
+SELECT units_available
+FROM blood_inventory
+WHERE bank_id = 1 AND blood_group_id = 1;
+
+-- EXPECTED RESULT:-
+-- donation_log gets a new row: donor_id = 1, units_donated = 4
+-- units_available for bank 1, A+ becomes 24 (20 + 4)
+
+------------------------------------------------------
+
+-- Trigger Demonstration 2
+-- TRIGGER: trg_prevent_negative_units
+-- USE : negative stock is blocked
+
+UPDATE blood_inventory
+SET units_available = -5
+WHERE inventory_id = 1;
+
+-- EXPECTED RESULT:-
+-- ERROR 1644 (45000): Units Cannot Be Negative
+
+------------------------------------------------------
+
+-- Trigger Demonstration 3
+-- (no trigger needed: requests.status has DEFAULT 'Pending')
+-- USE : a new request starts as Pending
+
+INSERT INTO requests
+(recipient_id, hospital_id, blood_group_id, units_required, request_date)
+VALUES
+(1, 1, 2, 4, CURDATE());
+
+SELECT *
+FROM requests
+ORDER BY request_id DESC
+LIMIT 1;
+
+-- EXPECTED RESULT:-
+-- status = 'Pending', bank_id = NULL, blood_group_id = 2 (A-)
+
+------------------------------------------------------
+
+-- Trigger Demonstration 4
+-- TRIGGER: trg_reduce_stock_on_complete
+-- USE : completing a request reduces the bank's stock
+-- Request 2 is Approved (B+, 1 unit, bank 3). Bank 3 holds 18 units of B+.
+
+UPDATE requests
+SET status = 'Completed'
+WHERE request_id = 2;
+
+SELECT units_available
+FROM blood_inventory
+WHERE bank_id = 3 AND blood_group_id = 3;
+
+-- EXPECTED RESULT:-
+-- units_available becomes 17 (18 - 1)
+
+-- =====================================================
+-- END OF PROJECT SCRIPT
+-- =====================================================
